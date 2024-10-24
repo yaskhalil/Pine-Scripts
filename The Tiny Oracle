@@ -1,0 +1,206 @@
+//@version=5
+//@Yaseen Khalil
+
+// 'The Tiny Oracle' analyzes market data using multiple technical indicators and provides a comprehensive overview of market conditions. 
+// It calculates metrics such as Alpha, Beta, and Z-Score alongside various oscillators and moving averages to help identify buy, sell, or neutral signals.
+
+indicator("The Tiny Oracle", overlay=true)
+
+// User Inputs
+// These inputs allow the user to select the symbol and resolution for the analysis.
+symbolInput = input.symbol("CRYPTOCAP:TOTAL", title="Symbol")  // Symbol for market data
+resolutionInput = input.timeframe("", title="Resolution")      // Resolution for the data
+src = request.security(symbolInput, resolutionInput, close)    // Fetches the close price for the selected symbol and resolution
+
+// Alpha, Beta, and Z-Score Calculations
+// Alpha measures the average bullish/bearish signal strength of the indicators.
+// Beta measures the variability or volatility of the signals, often calculated as the standard deviation of the scores.
+// Z-Score measures how far the current signal strength is from the average signal strength in terms of standard deviations.
+calcAlphaBetaZ(source, benchmark) =>
+    sourceReturns = ta.change(source)                                                                               // Calculate returns for the source symbol
+    benchmarkReturns = ta.change(benchmark)                                                                         // Calculate returns for the benchmark symbol
+    cov = ta.sma(sourceReturns * benchmarkReturns, 20) - ta.sma(sourceReturns, 20) * ta.sma(benchmarkReturns, 20)   // Covariance of returns
+    sourceDev = ta.stdev(sourceReturns, 20)                                                                         // Standard deviation of the source returns
+    benchDev = ta.stdev(benchmarkReturns, 20)                                                                       // Standard deviation of the benchmark returns
+    alpha = cov / (benchDev * benchDev)                                                                             // Alpha calculation
+    beta = cov / (sourceDev * sourceDev)                                                                            // Beta calculation
+    zscore = (source - ta.sma(source, 20)) / ta.stdev(source, 20)                                                   // Z-Score calculation
+    [alpha, beta, zscore]                                                                                           // Return alpha, beta, and z-score
+
+// Using S&P 500 (SPX) as the benchmark for Alpha, Beta, Z-Score calculations
+benchmark = request.security("SP:SPX", resolutionInput, close)                // Fetch close price of S&P 500
+[alphaVal, betaVal, zScoreVal] = calcAlphaBetaZ(src, benchmark)              // Calculate alpha, beta, and z-score using the source and benchmark
+
+// Alpha, Beta, Z-Score Buy, Sell, Neutral Logic
+// Based on calculated values of alpha, beta, and z-score, determine the buy, sell, or neutral recommendations.
+alphaReading = alphaVal > 0 ? "Buy" : alphaVal < 0 ? "Sell" : "Neutral"        // Determines the recommendation based on alpha value
+betaReading = betaVal > 1 ? "Buy" : betaVal < 1 ? "Sell" : "Neutral"           // Determines the recommendation based on beta value
+zScoreReading = zScoreVal < -1 ? "Buy" : zScoreVal > 1 ? "Sell" : "Neutral"    // Determines the recommendation based on z-score value
+
+// Function to Format Values in E Notation
+// Formats large or small values in scientific notation for readability.
+formatENotation(value) =>
+    absValue = math.abs(value)                                                 // Get absolute value of input
+    if absValue >= 1000 or absValue < 0.01                                     // Check if the value needs E notation
+        exponent = math.floor(math.log10(absValue))                           // Calculate the exponent
+        mantissa = value / math.pow(10, exponent)                             // Calculate the mantissa
+        mantissaStr = str.tostring(mantissa, "#.##")                          // Convert mantissa to string with two decimals
+        expStr = str.tostring(exponent)                                       // Convert exponent to string
+        mantissaStr + "e" + expStr                                            // Combine mantissa and exponent as a string
+    else
+        str.tostring(value, "#.##")                                           // Display value normally if not in E notation range
+
+// Oscillator Calculations
+// These calculations include the RSI, Stochastic, and CCI which help assess the momentum and direction of the market.
+rsiVal = ta.rsi(src, 14)                                                      // Relative Strength Index (RSI) calculation
+stochK = ta.stoch(source = src, high = src, low = src, length = 14)           // Stochastic K calculation
+cciVal = ta.cci(src, 20)                                                      // Commodity Channel Index (CCI) calculation
+
+// ADX, +DI, -DI Calculations
+// Calculates the Average Directional Index (ADX) to measure the strength of the trend
+// and Directional Movement Index (+DI and -DI) to determine trend direction.
+adxLength = 14                                                                // Length for ADX calculation
+tr = ta.tr(true)                                                              // True range calculation
+tr14 = ta.rma(tr, adxLength)                                                  // 14-period smoothed true range
+plusDM = math.max(ta.change(ta.highest(close, 1)), 0)                         // Positive directional movement
+minusDM = math.max(-ta.change(ta.lowest(close, 1)), 0)                        // Negative directional movement
+plusDM14 = ta.rma(plusDM, adxLength)                                          // 14-period smoothed +DM
+minusDM14 = ta.rma(minusDM, adxLength)                                        // 14-period smoothed -DM
+plusDI = 100 * plusDM14 / tr14                                                // +DI calculation
+minusDI = 100 * minusDM14 / tr14                                              // -DI calculation
+dx = 100 * math.abs(plusDI - minusDI) / (plusDI + minusDI)                    // DX calculation
+adxVal = ta.rma(dx, adxLength)                                                // ADX value calculation
+
+// Awesome Oscillator Calculation
+// The Awesome Oscillator helps gauge market momentum by comparing recent momentum with longer-term momentum using moving averages.
+aoVal = ta.sma(src, 5) - ta.sma(src, 34)                                      // Awesome Oscillator calculation
+
+// Momentum Calculation
+// Measures the momentum of the market by comparing the current price to the price 10 bars ago.
+momentumVal = src - src[10]                                                   // Momentum calculation (current price - price 10 bars ago)
+
+// MACD Calculation
+// Calculates the Moving Average Convergence Divergence (MACD) which is used to identify
+// changes in the strength, direction, momentum, and duration of a trend.
+fastMA = ta.ema(src, 12)                                                      // 12-period fast EMA
+slowMA = ta.ema(src, 26)                                                      // 26-period slow EMA
+macdVal = fastMA - slowMA                                                     // MACD line calculation
+signalLine = ta.ema(macdVal, 9)                                               // Signal line (9-period EMA of MACD)
+macdHist = macdVal - signalLine                                               // MACD histogram calculation
+
+// Williams %R Calculation
+// Williams %R is a momentum indicator that measures overbought and oversold levels.
+lengthWill = 14                                                               // Length for Williams %R
+highestHigh = ta.highest(src, lengthWill)                                     // Highest high in the length period
+lowestLow = ta.lowest(src, lengthWill)                                        // Lowest low in the length period
+willrVal = (highestHigh - src) / (highestHigh - lowestLow) * -100             // Williams %R calculation
+
+// Oscillator Signal Conditions
+// These conditions determine if the oscillator values suggest a buy or sell signal.
+rsiRed = rsiVal < 30 ? 1 : 0                                                  // RSI below 30 indicates oversold (buy signal)
+rsiBlue = rsiVal > 70 ? 1 : 0                                                 // RSI above 70 indicates overbought (sell signal)
+stochRed = stochK < 20 ? 1 : 0                                                // Stochastic below 20 indicates oversold (buy signal)
+stochBlue = stochK > 80 ? 1 : 0                                               // Stochastic above 80 indicates overbought (sell signal)
+cciRed = cciVal < -100 ? 1 : 0                                                // CCI below -100 indicates oversold (buy signal)
+cciBlue = cciVal > 100 ? 1 : 0                                                // CCI above 100 indicates overbought (sell signal)
+adxRed = adxVal < 25 ? 1 : 0                                                  // ADX below 25 indicates weak trend
+adxBlue = adxVal > 25 ? 1 : 0                                                 // ADX above 25 indicates strong trend
+aoRed = aoVal < 0 ? 1 : 0                                                     // AO below 0 indicates bearish momentum
+aoBlue = aoVal > 0 ? 1 : 0                                                    // AO above 0 indicates bullish momentum
+momentumRed = momentumVal < 0 ? 1 : 0                                         // Momentum below 0 indicates bearish
+momentumBlue = momentumVal > 0 ? 1 : 0                                        // Momentum above 0 indicates bullish
+macdRed = macdHist < macdHist[1] ? 1 : 0                                      // MACD histogram decreasing indicates bearish
+macdBlue = macdHist > macdHist[1] ? 1 : 0                                     // MACD histogram increasing indicates bullish
+willrRed = willrVal < -80 ? 1 : 0                                             // Williams %R below -80 indicates oversold
+willrBlue = willrVal > -20 ? 1 : 0                                            // Williams %R above -20 indicates overbought
+
+// Sum of Oscillator Signals
+// Summing the buy and sell signals from various oscillators to generate an overall market direction bias.
+oscRedSum = rsiRed + stochRed + cciRed + adxRed + aoRed + momentumRed + macdRed + willrRed              // Total sell signals
+oscBlueSum = rsiBlue + stochBlue + cciBlue + adxBlue + aoBlue + momentumBlue + macdBlue + willrBlue     // Total buy signals
+
+// Moving Averages Calculations and Signals
+// Calculates various moving averages and their buy/sell conditions based on the
+// relationship between the current price and the moving average.
+ema5Red = src < ta.ema(src, 5) ? 1 : 0                                        // EMA 5 bearish signal
+ema5Blue = src > ta.ema(src, 5) ? 1 : 0                                       // EMA 5 bullish signal
+sma5Red = src < ta.sma(src, 5) ? 1 : 0                                        // SMA 5 bearish signal
+sma5Blue = src > ta.sma(src, 5) ? 1 : 0                                       // SMA 5 bullish signal
+ema10Red = src < ta.ema(src, 10) ? 1 : 0                                      // EMA 10 bearish signal
+ema10Blue = src > ta.ema(src, 10) ? 1 : 0                                     // EMA 10 bullish signal
+sma10Red = src < ta.sma(src, 10) ? 1 : 0                                      // SMA 10 bearish signal
+sma10Blue = src > ta.sma(src, 10) ? 1 : 0                                     // SMA 10 bullish signal
+ema20Red = src < ta.ema(src, 20) ? 1 : 0                                      // EMA 20 bearish signal
+ema20Blue = src > ta.ema(src, 20) ? 1 : 0                                     // EMA 20 bullish signal
+sma20Red = src < ta.sma(src, 20) ? 1 : 0                                      // SMA 20 bearish signal
+sma20Blue = src > ta.sma(src, 20) ? 1 : 0                                     // SMA 20 bullish signal
+ema50Red = src < ta.ema(src, 50) ? 1 : 0                                      // EMA 50 bearish signal
+ema50Blue = src > ta.ema(src, 50) ? 1 : 0                                     // EMA 50 bullish signal
+sma50Red = src < ta.sma(src, 50) ? 1 : 0                                      // SMA 50 bearish signal
+sma50Blue = src > ta.sma(src, 50) ? 1 : 0                                     // SMA 50 bullish signal
+ema100Red = src < ta.ema(src, 100) ? 1 : 0                                    // EMA 100 bearish signal
+ema100Blue = src > ta.ema(src, 100) ? 1 : 0                                   // EMA 100 bullish signal
+sma100Red = src < ta.sma(src, 100) ? 1 : 0                                    // SMA 100 bearish signal
+sma100Blue = src > ta.sma(src, 100) ? 1 : 0                                   // SMA 100 bullish signal
+ema200Red = src < ta.ema(src, 200) ? 1 : 0                                    // EMA 200 bearish signal
+ema200Blue = src > ta.ema(src, 200) ? 1 : 0                                   // EMA 200 bullish signal
+sma200Red = src < ta.sma(src, 200) ? 1 : 0                                    // SMA 200 bearish signal
+sma200Blue = src > ta.sma(src, 200) ? 1 : 0                                   // SMA 200 bullish signal
+
+// Sum of Moving Average Signals
+// Summing the moving average signals to determine the overall market bias from MAs.
+maRedSum = ema5Red + sma5Red + ema10Red + sma10Red + ema20Red + sma20Red + ema50Red + sma50Red + ema100Red + sma100Red + ema200Red + sma200Red                  // Total bearish MA signals
+maBlueSum = ema5Blue + sma5Blue + ema10Blue + sma10Blue + ema20Blue + sma20Blue + ema50Blue + sma50Blue + ema100Blue + sma100Blue + ema200Blue + sma200Blue     // Total bullish MA signals
+
+// Calculate Overall Buy, Sell, Neutral Score
+// Combines the Alpha, Beta, Z-Score readings with oscillator and MA signals to generate an overall market direction label.
+buyScore = (alphaReading == "Buy" ? 1 : 0) + (betaReading == "Buy" ? 1 : 0) + (zScoreReading == "Buy" ? 1 : 0) + oscBlueSum + maBlueSum     // Total buy score
+sellScore = (alphaReading == "Sell" ? 1 : 0) + (betaReading == "Sell" ? 1 : 0) + (zScoreReading == "Sell" ? 1 : 0) + oscRedSum + maRedSum   // Total sell score
+
+// Determine the overall label for the market based on the buy and sell scores.
+overallLabel = buyScore > sellScore ? "Buy" : sellScore > buyScore ? "Sell" : "Neutral"  // Final overall market direction label
+
+// Create and Update Table with Analysis Data
+// Displays the calculated values, oscillator signals, moving average signals, and overall score in a table format on the chart.
+var table alphaBetaZTable = table.new(position.bottom_right, 13, 4, bgcolor=color.rgb(10, 10, 10, 50))  // Initialize table
+
+// Update Table with Alpha, Beta, Z-Score and Readings
+if bar_index == bar_index
+    table.cell(alphaBetaZTable, 0, 0, "Alpha(α)", text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Display Alpha label
+    table.cell(alphaBetaZTable, 0, 1, formatENotation(alphaVal), text_color=color.green, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Alpha value
+    table.cell(alphaBetaZTable, 0, 2, alphaReading, text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Alpha reading (Buy, Sell, Neutral)
+    table.cell(alphaBetaZTable, 1, 0, "Beta(β)", text_color=color.white, text_size=size.small)  // Display Beta label
+    table.cell(alphaBetaZTable, 1, 1, formatENotation(betaVal), text_color=color.green, text_size=size.small)  // Beta value
+    table.cell(alphaBetaZTable, 1, 2, betaReading, text_color=color.white, text_size=size.small)  // Beta reading (Buy, Sell, Neutral)
+    table.cell(alphaBetaZTable, 2, 0, "Z-Score(z)", text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Display Z-Score label
+    table.cell(alphaBetaZTable, 2, 1, formatENotation(zScoreVal), text_color=color.green, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Z-Score value
+    table.cell(alphaBetaZTable, 2, 2, zScoreReading, text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Z-Score reading (Buy, Sell, Neutral)
+
+// Update Table with Oscillators and Moving Averages
+if barstate.islast
+    // Display Oscillator Signals
+    table.cell(alphaBetaZTable, 3, 0, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Blank row for spacing
+    table.cell(alphaBetaZTable, 4, 0, "Oscillators", text_color=color.white, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Oscillators header
+    table.cell(alphaBetaZTable, 5, 0, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Blank row for spacing
+    table.cell(alphaBetaZTable, 3, 1, str.tostring(oscRedSum), text_color=color.red, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Oscillator sell signals
+    table.cell(alphaBetaZTable, 4, 1, str.tostring(11 - (oscRedSum + oscBlueSum)), text_color=color.gray, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Oscillator neutral signals
+    table.cell(alphaBetaZTable, 5, 1, str.tostring(oscBlueSum), text_color=color.green, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Oscillator buy signals
+    table.cell(alphaBetaZTable, 3, 2, "Sell", text_color=color.white, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Sell label
+    table.cell(alphaBetaZTable, 4, 2, "Neutral", text_color=color.white, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Neutral label
+    table.cell(alphaBetaZTable, 5, 2, "Buy", text_color=color.white, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Buy label
+    
+    // Display Moving Averages Signals
+    table.cell(alphaBetaZTable, 7, 0, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Blank row for spacing
+    table.cell(alphaBetaZTable, 8, 0, "MAs", text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Moving Averages header
+    table.cell(alphaBetaZTable, 9, 0, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Blank row for spacing
+    table.cell(alphaBetaZTable, 7, 1, str.tostring(maRedSum), text_color=color.red, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // MA sell signals
+    table.cell(alphaBetaZTable, 8, 1, str.tostring(17 - (maRedSum + maBlueSum)), text_color=color.gray, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // MA neutral signals
+    table.cell(alphaBetaZTable, 9, 1, str.tostring(maBlueSum), text_color=color.green, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // MA buy signals
+    table.cell(alphaBetaZTable, 7, 2, "Sell", text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Sell label
+    table.cell(alphaBetaZTable, 8, 2, "Neutral", text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Neutral label
+    table.cell(alphaBetaZTable, 9, 2, "Buy", text_color=color.white, text_size=size.small, bgcolor=color.rgb(30, 30, 30, 10))  // Buy label
+
+    // Display Overall Score
+    table.cell(alphaBetaZTable, 10, 0, "Overall Score", text_color=color.yellow, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Overall score header
+    table.cell(alphaBetaZTable, 10, 1, str.tostring(buyScore - sellScore) + " ", text_color=color.yellow, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Overall score value
+    table.cell(alphaBetaZTable, 10, 2, str.tostring(overallLabel), text_color=color.yellow, text_size=size.small, bgcolor=color.rgb(10, 10, 10, 25))  // Overall label (Buy, Sell, Neutral)
