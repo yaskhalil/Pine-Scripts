@@ -1,1 +1,151 @@
+//@version=5
+indicator("Polynomial Regression Channel Extrapolation (Non-Repainting)", overlay=true, max_lines_count=500)
 
+//------------------------------------------------------------------------------
+// Settings
+//------------------------------------------------------------------------------
+length      = input.int(100, minval=2, title='Length')
+extrapolate = input.int(10, minval=0, title='Extrapolation Length')
+degree      = input.int(3, 'Polynomial Degree', minval=1, maxval=8)
+src         = input(close, title='Source')
+lock        = input(false, 'Lock Forecast')
+
+// Style
+up_css = input.color(color.new(#0cb51a, 0), 'Upward Color', group='Style')
+dn_css = input.color(color.new(#ff1100, 0), 'Downward Color', group='Style')
+ex_css = input.color(color.new(#ff5d00, 0), 'Extrapolation Color', group='Style')
+ch_css = input.color(color.new(#0000FF, 0), 'Channel Color', group='Style')
+width  = input(1, 'Width', group='Style')
+
+//------------------------------------------------------------------------------
+// Initialize lines array
+//------------------------------------------------------------------------------
+var lines = array.new_line(0)
+
+// Ensure the lines array has enough lines
+if barstate.isfirst
+    num_lines = length + extrapolate - 2
+    for _ = 0 to num_lines
+        array.push(lines, line.new(na, na, na, na))
+    // For channel lines (upper and lower)
+    for _ = 0 to num_lines
+        array.push(lines, line.new(na, na, na, na))
+    for _ = 0 to num_lines
+        array.push(lines, line.new(na, na, na, na))
+
+//------------------------------------------------------------------------------
+// Polynomial Regression Calculation
+//------------------------------------------------------------------------------
+var float forecast = na
+var bool is_locked = false
+var float std_dev = na  // Standard deviation of residuals
+
+if not lock or (lock and not is_locked)
+    // Check if enough historical bars are available
+    if bar_index >= length - 1
+        // Prepare data arrays
+        prices   = array.new_float(0)
+        x_values = array.new_float(0)
+        
+        for i = 0 to length - 1
+            array.push(x_values, i)
+            array.push(prices, src[length - 1 - i])
+        
+        // Build design matrix
+        design = matrix.new<float>(length, degree + 1)
+        for row = 0 to length - 1
+            float x = array.get(x_values, row)
+            for col = 0 to degree
+                float x_power = math.pow(x, col)
+                matrix.set(design, row, col, x_power)
+        
+        // Build response matrix
+        response = matrix.new<float>(length, 1)
+        for i = 0 to length - 1
+            matrix.set(response, i, 0, array.get(prices, i))
+        
+        // Compute coefficients
+        trans_design      = matrix.transpose(design)
+        normal_matrix     = matrix.mult(trans_design, design)
+        inv_normal_matrix = matrix.inv(normal_matrix)
+        if matrix.rows(inv_normal_matrix) > 0
+            coefficients = matrix.mult(matrix.mult(inv_normal_matrix, trans_design), response)
+            
+            // Calculate predicted values and residuals for historical data
+            residuals = array.new_float(0)
+            for i = 0 to length - 1
+                float x = array.get(x_values, i)
+                float y_pred = 0.0
+                for j = 0 to degree
+                    y_pred += math.pow(x, j) * matrix.get(coefficients, j, 0)
+                float y_actual = array.get(prices, i)
+                float residual = y_actual - y_pred
+                array.push(residuals, residual)
+            // Compute standard deviation of residuals
+            std_dev := array.stdev(residuals)
+            
+            // Generate regression line and extrapolation
+            float y1 = na
+            float y1_upper = na
+            float y1_lower = na
+            idx = 0
+            for i = 0 to length + extrapolate - 1
+                float x = i
+                float y2 = 0.0
+                for j = 0 to degree
+                    y2 += math.pow(x, j) * matrix.get(coefficients, j, 0)
+                
+                float y2_upper = y2 + std_dev
+                float y2_lower = y2 - std_dev
+                
+                if idx == 0
+                    forecast := y2
+                
+                // Determine x-coordinates
+                int x1 = bar_index - length + idx + 1
+                int x2 = x1 + 1
+                
+                // Set lines for regression/extrapolation line
+                if idx < length + extrapolate - 1
+                    if x1 >= 0 and x2 >= 0
+                        line get_line = array.get(lines, idx)
+                        // Set color based on whether the line is extrapolated
+                        color css = idx >= length - 1 ? ex_css : (y2 >= y1 ? up_css : dn_css)
+                        if not na(y1)
+                            line.set_xy1(get_line, x1, y1)
+                            line.set_xy2(get_line, x2, y2)
+                            line.set_color(get_line, css)
+                            line.set_width(get_line, width)
+                
+                // Set lines for upper channel
+                if idx < length + extrapolate - 1
+                    if x1 >= 0 and x2 >= 0
+                        line get_line_upper = array.get(lines, length + extrapolate - 1 + idx)
+                        if not na(y1_upper)
+                            line.set_xy1(get_line_upper, x1, y1_upper)
+                            line.set_xy2(get_line_upper, x2, y2_upper)
+                            line.set_color(get_line_upper, ch_css)
+                            line.set_width(get_line_upper, width)
+                
+                // Set lines for lower channel
+                if idx < length + extrapolate - 1
+                    if x1 >= 0 and x2 >= 0
+                        line get_line_lower = array.get(lines, 2 * (length + extrapolate - 1) + idx)
+                        if not na(y1_lower)
+                            line.set_xy1(get_line_lower, x1, y1_lower)
+                            line.set_xy2(get_line_lower, x2, y2_lower)
+                            line.set_color(get_line_lower, ch_css)
+                            line.set_width(get_line_lower, width)
+                
+                y1 := y2
+                y1_upper := y2_upper
+                y1_lower := y2_lower
+                idx += 1
+            
+            if lock
+                is_locked := true
+else
+    forecast := forecast[1]
+
+// Plot the extrapolated forecast
+plot(forecast, 'Extrapolation', color=ex_css, offset=extrapolate, linewidth=width)
