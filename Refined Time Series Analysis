@@ -1,0 +1,129 @@
+//@version=5
+//@ Yaseen Khalil
+
+// The "Refined Time Series Analysis" utilizes linear regression to analyze price movements over time.
+// It helps identify trends, confirm trend directions, and highlight potential trading areas by combining time series analysis with linear regression.
+indicator("Refined Time Series Analysis", overlay=true)
+
+// Group Definitions for User Inputs
+inputGrp = "User Inputs"                  // Group for main user inputs
+vizGrp = "Visualization Settings"         // Group for visualization options
+corrGrp = "Correlation Analysis"          // Group for correlation analysis options
+fillGrp = "Fill Settings"                 // Group for settings related to band fills
+outlierGrp = "Outlier Detection"          // Group for settings related to outlier detection
+
+// User Inputs
+// Inputs to customize the behavior and appearance of the indicator.
+periodLength = input.int(50, title="Lookback Period", group=inputGrp)                    // Period length used for calculations
+manualCalc = input.bool(false, title="Manual Calculation Mode", group=inputGrp)          // Toggle for manual mode calculations
+futureHours = input.float(14, title="Prediction Hours Ahead", group=inputGrp)            // Number of hours ahead for predictions
+showDataTbl = input.bool(false, title="Display Data Table", group=vizGrp)                // Toggle to show data table on the chart
+chartTimeFrame = input.timeframe("", title="Chart Timeframe", group=inputGrp)            // Timeframe used for calculations
+displayTrendTbl = input.bool(false, title="Display Trend Table", group=vizGrp)           // Toggle to display the trend table
+enableFills = input.bool(true, title="Enable Band Fills", group=fillGrp)                 // Toggle to enable fills between bands
+highlightOutliers = input.bool(false, title="Highlight Outliers", group=outlierGrp)      // Toggle to highlight outlier points on the chart
+showCorr = input.bool(false, title="Display Correlation Table", group=corrGrp)           // Toggle to display correlation table
+showSeriesFill = input.bool(true, title="Show Series Fill", group=fillGrp)               // Toggle to show fills between series bands
+
+// Price and Time Calculations
+// This section calculates necessary statistical metrics for time and price to set up linear regression calculations.
+sourcePrice = close                                             // Source price used for calculations, default is the closing price
+currentTime = time                                              // Current time value for each bar
+lookback = periodLength                                         // Number of bars to look back for calculations
+sumTime = ta.sma(currentTime, lookback)                         // Simple moving average of time values
+sumPrice = ta.sma(sourcePrice, lookback)                        // Simple moving average of price values
+sumTimePrice = ta.sma(currentTime * sourcePrice, lookback)      // Average of the product of time and price
+sumTimeSquared = ta.sma(currentTime * currentTime, lookback)    // Average of squared time values
+
+// Regression Slope and Intercept Calculations
+// Computes the slope and intercept of the linear regression line using least squares regression.
+regSlope = (lookback * sumTimePrice - sumTime * sumPrice) / (lookback * sumTimeSquared - sumTime * sumTime)  // Slope of the regression line
+regIntercept = (sumPrice - regSlope * sumTime) / lookback  // Intercept of the regression line
+
+// Calculate correlation coefficient and regression line
+corrCoeff = ta.correlation(time, close, periodLength)  // Correlation between time and price
+regLine = regSlope * currentTime + regIntercept        // Equation of the regression line
+residuals = sourcePrice - regLine                      // Difference between actual price and regression line (residuals)
+
+// Standard Error Calculations
+// Computes standard error to establish confidence bands around the regression line, helping identify potential entry points.
+sumResidualsSquared = ta.sma(residuals * residuals, lookback)       // Average of squared residuals
+standardError = math.sqrt(sumResidualsSquared / (lookback - 2))     // Standard error of the regression line
+stdUpperBound = regLine + standardError                             // Upper confidence bound
+stdLowerBound = regLine - standardError                             // Lower confidence bound
+errorMargin = standardError / 4                                     // Error margin for band adjustments
+
+// Standard Deviation Extensions
+// Extends the standard deviation bands to identify potential support and resistance levels.
+deviation = ta.stdev(regLine, 500)  // Standard deviation of the regression line
+
+// Upper bounds for extended bands with decreasing confidence levels
+band1Upper = regLine + (1.5 * deviation - 0 * 2 * errorMargin)
+band2Upper = regLine + (1.5 * deviation - 1 * 2 * errorMargin)
+band3Upper = regLine + (1.5 * deviation - 2 * 2 * errorMargin)
+band4Upper = regLine + (1.5 * deviation - 3 * 2 * errorMargin)
+band5Upper = regLine + (1.5 * deviation - 4 * 2 * errorMargin)
+
+// Lower bounds for extended bands with decreasing confidence levels
+band1Lower = regLine - (1.5 * deviation - 0 * 2 * errorMargin)
+band2Lower = regLine - (1.5 * deviation - 1 * 2 * errorMargin)
+band3Lower = regLine - (1.5 * deviation - 2 * 2 * errorMargin)
+band4Lower = regLine - (1.5 * deviation - 3 * 2 * errorMargin)
+band5Lower = regLine - (1.5 * deviation - 4 * 2 * errorMargin)
+
+// Corrected Color Array Declaration
+// Creates an array of colors used for plotting the confidence bands and fills.
+plotColors = array.new_color(5)  // Array to store colors for the bands
+array.push(plotColors, color.new(color.blue, 70))   // Color for band 1
+array.push(plotColors, color.new(color.teal, 70))   // Color for band 2
+array.push(plotColors, color.new(color.purple, 70)) // Color for band 3
+array.push(plotColors, color.new(color.gray, 70))   // Color for band 4
+array.push(plotColors, color.new(color.fuchsia, 70))// Color for band 5
+
+// Plotting Bands and Regression Line
+// Plots the main regression line and the extended confidence bands on the chart.
+plot(regLine, color=color.gray, title="Regression Line", linewidth=3)  // Main regression line
+
+// Plot upper and lower bands with their corresponding colors from the color array
+band1UpperPlot = plot(band1Upper, color=array.get(plotColors, 0), linewidth=2, title="Upper Band 1")
+band2UpperPlot = plot(band2Upper, color=array.get(plotColors, 1), linewidth=2, title="Upper Band 2")
+band3UpperPlot = plot(band3Upper, color=array.get(plotColors, 2), linewidth=2, title="Upper Band 3")
+band4UpperPlot = plot(band4Upper, color=array.get(plotColors, 3), linewidth=2, title="Upper Band 4")
+band5UpperPlot = plot(band5Upper, color=array.get(plotColors, 4), linewidth=2, title="Upper Band 5")
+
+band1LowerPlot = plot(band1Lower, color=array.get(plotColors, 0), linewidth=2, title="Lower Band 1")
+band2LowerPlot = plot(band2Lower, color=array.get(plotColors, 1), linewidth=2, title="Lower Band 2")
+band3LowerPlot = plot(band3Lower, color=array.get(plotColors, 2), linewidth=2, title="Lower Band 3")
+band4LowerPlot = plot(band4Lower, color=array.get(plotColors, 3), linewidth=2, title="Lower Band 4")
+band5LowerPlot = plot(band5Lower, color=array.get(plotColors, 4), linewidth=2, title="Lower Band 5")
+
+// Fill Between Bands
+// Adds fills between upper and lower bands to visually enhance the confidence regions on the chart.
+fill(band1UpperPlot, band1LowerPlot, color=enableFills ? array.get(plotColors, 0) : na)
+fill(band2UpperPlot, band2LowerPlot, color=enableFills ? array.get(plotColors, 1) : na)
+fill(band3UpperPlot, band3LowerPlot, color=enableFills ? array.get(plotColors, 2) : na)
+fill(band4UpperPlot, band4LowerPlot, color=enableFills ? array.get(plotColors, 3) : na)
+fill(band5UpperPlot, band5LowerPlot, color=enableFills ? array.get(plotColors, 4) : na)
+
+// Outlier Detection
+// Highlights outlier data points based on Z-score calculations, marking significant deviations from the mean.
+zMean = ta.sma(close, periodLength)  // Mean of closing prices
+zDev = ta.stdev(close, periodLength) // Standard deviation of closing prices
+zScore = (close - zMean) / zDev      // Z-score to measure how far a data point is from the mean
+outlierHigh = zScore >= 3.0          // Define high outliers (above 3 standard deviations)
+outlierLow = zScore <= -3.0          // Define low outliers (below -3 standard deviations)
+
+// Highlight outliers with a background color if the option is enabled.
+bgcolor(outlierHigh ? color.red : na, display = highlightOutliers ? display.all : display.none)
+bgcolor(outlierLow ? color.red : na, display = highlightOutliers ? display.all : display.none)
+
+// Trend and Correlation Analysis
+// Determines the trend direction and changes the color of the regression line based on the trend.
+trendUp = corrCoeff >= 0.5 and corrCoeff[5] >= 0.5                              // Identifies an upward trend when correlation is positive and sustained
+trendDown = corrCoeff <= -0.5 and corrCoeff[5] <= -0.5                          // Identifies a downward trend when correlation is negative and sustained
+isRising = ta.rising(regLine, 3)                                                // Checks if the regression line is rising
+isFalling = ta.falling(regLine, 3)                                              // Checks if the regression line is falling
+lineColor = isRising ? color.green : isFalling ? color.red : color.gray  // Sets line color based on trend direction
+
+// Plot the regression line with trend colors based on the current trend state.
+plot(regLine, color=lineColor, title="Regression Line with Trend", linewidth=3)
