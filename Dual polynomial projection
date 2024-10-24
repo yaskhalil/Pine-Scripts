@@ -1,0 +1,164 @@
+//@version=5
+//@Yaseen Khalil
+
+// The "Dual Polynomial Projection" uses polynomial regression to fit curves to historical price data 
+// and then projects those curves into the future.
+indicator("Dual Polynomial Projection", overlay=true, max_lines_count=500)
+
+// Configurations: User Inputs for the Indicator
+// This section defines the main settings for the two polynomial projections, including period lengths, forecast lengths, and polynomial degrees.
+
+// Inputs for the first polynomial projection
+periodLength1 = input.int(100, title="Period Length 1", minval=0)  // Number of historical bars used for the first projection
+forecastLength1 = input.int(10, title="Forecast Length 1", minval=0)  // Number of future bars to forecast for the first projection
+polyDegree1 = input.int(3, title="Polynomial Degree 1", minval=0, maxval=8)  // Degree of the polynomial for the first projection
+
+// Calculations for the second polynomial projection
+// These values are derived from the first projection settings to create a similar but distinct second projection.
+periodLength2 = math.round(periodLength1 * 0.95)  // Second period length, set to 5% less than the first period
+forecastLength2 = forecastLength1  // The second forecast length matches the first forecast length
+polyDegree2 = polyDegree1 + 1  // The second polynomial degree is one higher than the first degree
+
+// Input for price source and projection lock
+priceSource = input(close)  // Source price for projections, default is the close price
+lockForecast = input(false, title="Lock Projection")  // If true, locks the projections to prevent updates after initial calculation
+
+// Styling Options
+// Define the colors and line thicknesses for visualizing the projections and trends on the chart.
+colorUp = input.color(#1a85ff, title="Uptrend Color", group="Visualization")  // Color for uptrend segments
+colorDown = input.color(#e600e6, title="Downtrend Color", group="Visualization")  // Color for downtrend segments
+colorForecast1 = input.color(#ffa500, title="Forecast Color 1", group="Visualization")  // Color for the first forecast line
+colorForecast2 = input.color(#ff5733, title="Forecast Color 2", group="Visualization")  // Color for the second forecast line
+lineThickness = input(1, title="Line Thickness", group="Visualization")  // Thickness of the projection lines
+
+// Initialize Line Arrays
+// These arrays store the lines drawn on the chart for both projections.
+var lineArray1 = array.new_line(0)  // Array for the first set of projection lines
+var lineArray2 = array.new_line(0)  // Array for the second set of projection lines
+
+// On the first bar, initialize the arrays with line objects to hold the projection lines.
+if (barstate.isfirst)
+    for i = -forecastLength1 to periodLength1 - 1
+        array.push(lineArray1, line.new(na, na, na, na, style=line.style_arrow_left))  // Add lines for the first projection
+    for i = -forecastLength2 to periodLength2 - 1
+        array.push(lineArray2, line.new(na, na, na, na, style=line.style_dashed))  // Add lines for the second projection
+
+// Design Matrix & Partial System Solution
+// This section sets up the matrices required for the polynomial regression calculations. 
+// These matrices are used to solve for the coefficients of the polynomial equations that define the projections.
+timeIndex = bar_index  // The current bar index, used for positioning the lines
+
+// Declare matrices for the design and response data for both projections.
+var designMatrix1 = matrix.new<float>(0, 0)  // Design matrix for the first polynomial projection
+var responseMatrix1 = matrix.new<float>(0, 0)  // Response matrix for the first polynomial projection
+
+var designMatrix2 = matrix.new<float>(0, 0)  // Design matrix for the second polynomial projection
+var responseMatrix2 = matrix.new<float>(0, 0)  // Response matrix for the second polynomial projection
+
+// On the first bar, populate the design matrices with powers of indices up to the specified polynomial degrees.
+if (barstate.isfirst)
+    for degreeIndex = 0 to polyDegree1
+        tempColumn = array.new_float(0)  // Temporary array to hold the powers of indices
+        for lenIndex = 0 to periodLength1 - 1
+            array.push(tempColumn, math.pow(lenIndex, degreeIndex))  // Fill array with powers of the index
+        matrix.add_col(designMatrix1, degreeIndex, tempColumn)  // Add the column to the first design matrix
+
+    for degreeIndex = 0 to polyDegree2
+        tempColumn = array.new_float(0)
+        for lenIndex = 0 to periodLength2 - 1
+            array.push(tempColumn, math.pow(lenIndex, degreeIndex))  // Fill array with powers of the index
+        matrix.add_col(designMatrix2, degreeIndex, tempColumn)  // Add the column to the second design matrix
+
+// Compute the transposed and inverted design matrices needed for solving the polynomial coefficients.
+var invDesign1 = matrix.inv(matrix.mult(matrix.transpose(designMatrix1), designMatrix1))  // Inverse of the first design matrix
+var designTransposed1 = matrix.mult(invDesign1, matrix.transpose(designMatrix1))  // Partial solution for the first projection
+
+var invDesign2 = matrix.inv(matrix.mult(matrix.transpose(designMatrix2), designMatrix2))  // Inverse of the second design matrix
+var designTransposed2 = matrix.mult(invDesign2, matrix.transpose(designMatrix2))  // Partial solution for the second projection
+
+// Compute Polynomial Regressions
+// Clculate the actual polynomial coefficients and uses them to draw the projection lines on the chart.
+var hasRun = 1  // Flag to control when the calculations run
+var matrix<float> coefMatrix1 = na  // Coefficient matrix for the first projection
+var matrix<float> coefMatrix2 = na  // Coefficient matrix for the second projection
+var iterX1 = -forecastLength1  // Starting index for first projection calculation
+var iterX2 = -forecastLength2  // Starting index for second projection calculation
+var float projValue1 = na  // Projected value for the first forecast
+var float projValue2 = na  // Projected value for the second forecast
+
+// Perform calculations on the last bar to generate the projections and draw them.
+if (barstate.islast)
+    if (hasRun)
+        // Create arrays to hold the price data that will be used in the polynomial calculations.
+        priceArray1 = array.new_float(0)  // Array for the first projection's price data
+        for i = 0 to periodLength1 - 1
+            array.push(priceArray1, priceSource[i])  // Add historical price data to the array
+        matrix.add_col(responseMatrix1, 0, priceArray1)  // Add the price data as a column in the response matrix
+        coefMatrix1 := matrix.mult(designTransposed1, responseMatrix1)  // Calculate coefficients for the first polynomial
+
+        priceArray2 = array.new_float(0)  // Array for the second projection's price data
+        for i = 0 to periodLength2 - 1
+            array.push(priceArray2, priceSource[i])  // Add historical price data to the array
+        matrix.add_col(responseMatrix2, 0, priceArray2)  // Add the price data as a column in the response matrix
+        coefMatrix2 := matrix.mult(designTransposed2, responseMatrix2)  // Calculate coefficients for the second polynomial
+
+        // Initialize variables for drawing the lines on the chart.
+        float previousY1 = na  // Previous Y value for first projection line
+        float previousY2 = na  // Previous Y value for second projection line
+        lineIndex1 = 0  // Index for managing first set of lines
+        lineIndex2 = 0  // Index for managing second set of lines
+
+        // Loop to calculate Y values and draw lines for the first polynomial projection.
+        for i = -forecastLength1 to periodLength1 - 1
+            calcY1 = 0.  // Reset calculation for each iteration
+            for j = 0 to polyDegree1
+                calcY1 += math.pow(i, j) * matrix.get(coefMatrix1, j, 0)  // Calculate Y value using the polynomial formula
+            if lineIndex1 == 0
+                projValue1 := calcY1  // Store the first projected value for plotting
+
+            trendColor1 = calcY1 < previousY1 ? colorUp : colorDown  // Set line color based on trend direction
+            currLine1 = array.get(lineArray1, lineIndex1)  // Get the current line object
+            line.set_xy1(currLine1, timeIndex - i + 1, previousY1)  // Set the start point of the line
+            line.set_xy2(currLine1, timeIndex - i, calcY1)  // Set the end point of the line
+            line.set_color(currLine1, i <= 0 ? colorForecast1 : trendColor1)  // Set line color for forecast vs historical
+            line.set_width(currLine1, lineThickness)  // Set line thickness
+            previousY1 := calcY1  // Update the previous Y value
+            lineIndex1 += 1  // Increment the line index
+
+        // Loop to calculate Y values and draw lines for the second polynomial projection.
+        for i = -forecastLength2 to periodLength2 - 1
+            calcY2 = 0.  // Reset calculation for each iteration
+            for j = 0 to polyDegree2
+                calcY2 += math.pow(i, j) * matrix.get(coefMatrix2, j, 0)  // Calculate Y value using the polynomial formula
+            if lineIndex2 == 0
+                projValue2 := calcY2  // Store the first projected value for plotting
+
+            trendColor2 = calcY2 < previousY2 ? colorUp : colorDown  // Set line color based on trend direction
+            currLine2 = array.get(lineArray2, lineIndex2)  // Get the current line object
+            line.set_xy1(currLine2, timeIndex - i + 1, previousY2)  // Set the start point of the line
+            line.set_xy2(currLine2, timeIndex - i, calcY2)  // Set the end point of the line
+            line.set_color(currLine2, i <= 0 ? colorForecast2 : trendColor2)  // Set line color for forecast vs historical
+            line.set_width(currLine2, 1)  // Set line thickness
+            previousY2 := calcY2  // Update the previous Y value
+            lineIndex2 += 1  // Increment the line index
+
+        // Option to lock the projections, preventing further updates.
+        if (lockForecast)
+            hasRun := 0  // Set flag to prevent recalculation
+    else
+        // Update the projected values if the projections are locked.
+        calcY1 = 0.
+        iterX1 -= 1  // Decrement index for first projection
+        for j = 0 to polyDegree1
+            calcY1 += math.pow(iterX1, j) * matrix.get(coefMatrix1, j, 0)  // Calculate projected value
+        projValue1 := calcY1
+
+        calcY2 = 0.
+        iterX2 -= 1  // Decrement index for second projection
+        for j = 0 to polyDegree2
+            calcY2 += math.pow(iterX2, j) * matrix.get(coefMatrix2, j, 0)  // Calculate projected value
+        projValue2 := calcY2
+
+// Plot the projected values on the chart when the projections are locked.
+plot(hasRun == 0 ? projValue1 : na, title="Projection 1", color=colorForecast1, offset=forecastLength1, linewidth=lineThickness)
+plot(hasRun == 0 ? projValue2 : na, title="Projection 2", color=colorForecast2, offset=forecastLength2 + 5, linewidth=1, style=plot.style_circles)
