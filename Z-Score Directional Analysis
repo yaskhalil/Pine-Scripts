@@ -1,0 +1,81 @@
+//@version=5
+//@Yaseen Khalil
+
+// The 'Z-Score Directional Analysis' evaluates how far the current price deviates from its average price
+// over a specified period using the Z-Score, mean, and standard deviation.
+
+indicator("Z-Score Directional Analysis", overlay=false)
+
+// Tooltips for User Inputs
+tt_zLength = "Sets the length of the Z-Score assessment. Default is 75 periods."
+tt_smaLength = "Sets the SMA length for the display. Default is 75, adjust for responsiveness."
+tt_showTable = "Toggle to display the Z-Table summarizing probabilities."
+
+// User Inputs
+zLength = input.int(75, title="Z-Score Lookback Length", tooltip=tt_zLength)    // Defines the lookback period for Z-Score calculation.
+smaLength = input.int(75, title="SMA Length", tooltip=tt_smaLength)             // Sets the lookback period for the SMA calculation.
+showTable = input.bool(true, title="Display Z-Table", tooltip=tt_showTable)     // Toggle to show or hide the Z-Score probability table.
+
+// Z-Score and SMA Calculations
+zScore = (close - ta.sma(close, zLength)) / ta.stdev(close, zLength)            // Calculate the Z-Score based on the close price, showing how far the price deviates from its average.
+meanLine = ta.sma(close, zLength)                                               // Calculate the Simple Moving Average (SMA) of the close price.
+stdDev = ta.stdev(close, zLength)                                               // Calculate the standard deviation of the close price.
+
+// Reflect Z-Score as a price level: adjusts the Z-Score to a price-like value.
+reflectedZScore = meanLine + (zScore * stdDev)                                  // This projection helps visualize where the Z-Score would position the price.
+
+// Plotting the Z-Score and Mean Lines
+plot(reflectedZScore, "Reflected Z-Score Line", color=color.blue, linewidth=2, style=plot.style_circles)    // Plots the reflected Z-Score as a blue line with circles.
+plot(meanLine, "Mean Line", color=color.red, linewidth=2)                                                   // Plots the Mean line in red.
+
+// Dynamic Label Updates
+// Manages the creation and updating of labels that display the current Z-Score and Mean values directly on the chart.
+var label zLabel = na                                                          // Variable to store the Z-Score label.
+var label meanLabel = na                                                       // Variable to store the Mean label.
+
+// Update the labels with the latest values on each new bar.
+if bar_index == ta.highest(bar_index, 1)
+    // Delete the previous labels to keep the chart clean.
+    label.delete(zLabel)
+    label.delete(meanLabel)
+    
+    // Create new labels for the latest bar to display Z-Score and Mean values.
+    zLabel := label.new(bar_index, reflectedZScore, text="Z-Score: " + str.tostring(zScore, "#.##") + "\nPrice: " + str.tostring(reflectedZScore, "#.##"), size=size.small, color=#2195f30c, textcolor=color.white, style=label.style_label_left)
+    meanLabel := label.new(bar_index, meanLine, text="Mean: " + str.tostring(meanLine, "#.##"), size=size.small, color=color.rgb(255, 82, 82, 95), textcolor=color.white, style=label.style_label_left)
+
+// Table Display Settings
+// Set up the Z-Score probability table and update it based on the current Z-Score value.
+bgColor = color.black                                                         // Background color for the table.
+textColor = color.white                                                       // Text color for the table content.
+
+// Initialize the table with default settings at the bottom center of the chart.
+var table zTable = table.new(position.bottom_center, 8, 3, border_color=color.gray, bgcolor=bgColor)
+
+// Display the Z-Score Probability Table
+// Show how likely it is for the price to be in a certain Z-Score range based on historical data.
+if showTable
+    currentProb = zScore < -3 ? "0.0013" : zScore < -2 ? "0.0228" : zScore < -1 ? "0.1600" : zScore < 0 ? "0.5000" : zScore < 1 ? "0.8500" : zScore < 2 ? "0.9800" : "0.9998"  // Calculate the current probability based on the Z-Score value.
+    
+    // Populate the table with Z-Score ranges and their respective probabilities.
+    table.cell(zTable, 0, 0, text="Z-Score", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 1, 0, text="-3", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 2, 0, text="-2", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 3, 0, text="-1", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 4, 0, text="0", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 5, 0, text="1", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 6, 0, text="2", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 7, 0, text="3", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+
+    // Add probability values corresponding to each Z-Score level.
+    table.cell(zTable, 0, 1, text="Probability", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 1, 1, text="0.0013", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 2, 1, text="0.0228", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 3, 1, text="0.1600", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 4, 1, text="0.5000", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 5, 1, text="0.8500", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 6, 1, text="0.9800", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    table.cell(zTable, 7, 1, text="0.9998", text_size=size.small, bgcolor=bgColor, text_color=textColor)
+    
+    // Highlight the probability corresponding to the current Z-Score value.
+    table.cell(zTable, 0, 2, text="Current Prob", text_size=size.small, bgcolor=bgColor, text_color=color.yellow)
+    table.cell(zTable, 4, 2, text=currentProb, text_size=size.small, bgcolor=bgColor, text_color=color.yellow)
